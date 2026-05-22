@@ -228,6 +228,7 @@ Output must be valid JSON with this exact schema:
         systemPrompt: job.systemPrompt,
         questionPack: job.questionPack,
         maxDurationSeconds: job.maxDurationSeconds,
+        isPublished: true,
       },
       create: job,
     });
