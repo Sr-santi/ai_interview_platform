@@ -160,6 +160,11 @@ export function InterviewRoom({ job }: { job: Job }) {
     }
   }, [camera.stream]);
 
+  // Load client-side TTS model on mount
+  useEffect(() => {
+    tts.loadModel();
+  }, []);
+
   // ── Orchestration: TTS → listening ──
   useEffect(() => {
     if (interview.state !== "speaking" || !interview.lastResponse) return;
@@ -276,21 +281,60 @@ export function InterviewRoom({ job }: { job: Job }) {
 
   // ── IDLE STATE ──
   if (interview.state === "idle") {
+    const isPreparing = tts.ttsStatus === "loading";
+    const isReady = tts.ttsStatus === "ready" || tts.ttsStatus === "fallback";
+
     return (
       <>
         <div className="flex flex-col items-center justify-center py-12 sm:py-16 px-3 sm:px-4">
           <div className="rounded-xl border border-interview-border bg-interview-surface p-8 text-center max-w-md w-full">
             <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-interview-accent/10 flex items-center justify-center">
-              <svg className="w-8 h-8 text-interview-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-              </svg>
+              {isPreparing ? (
+                <svg className="w-8 h-8 text-interview-accent animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              ) : (
+                <svg className="w-8 h-8 text-interview-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                </svg>
+              )}
             </div>
-            <h2 className="text-xl font-semibold text-interview-text mb-2">
-              Ready for your {job.title} interview?
-            </h2>
-            <p className="text-interview-muted text-sm mb-6">
-              {MAX_QUESTIONS} questions. Record your answers or type them. You can retry before advancing.
-            </p>
+
+            {isPreparing ? (
+              <>
+                <h2 className="text-xl font-semibold text-interview-text mb-2">
+                  Preparing interview room...
+                </h2>
+                <p className="text-interview-muted text-sm mb-4">
+                  Loading speech engine for natural voice output.
+                </p>
+                <div className="h-1.5 rounded-full bg-interview-bg border border-interview-border/50 mb-2 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-interview-accent transition-all duration-300"
+                    style={{ width: `${tts.loadProgress}%` }}
+                  />
+                </div>
+                <p className="text-xs text-interview-muted">{tts.loadProgress}%</p>
+              </>
+            ) : (
+              <>
+                <h2 className="text-xl font-semibold text-interview-text mb-2">
+                  Ready for your {job.title} interview?
+                </h2>
+                <p className="text-interview-muted text-sm mb-6">
+                  {MAX_QUESTIONS} questions. Record your answers or type them. You can retry before advancing.
+                </p>
+                {tts.ttsStatus === "fallback" && (
+                  <p className="mb-4 text-xs text-interview-muted">Audio: browser speech</p>
+                )}
+                {tts.ttsStatus === "error" && !tts.isSupported && (
+                  <p className="mb-4 text-xs text-interview-warning">
+                    Speech not available in this browser. Try Chrome or Edge.
+                  </p>
+                )}
+              </>
+            )}
+
             {!recorder.isSupported && recorder.error && (
               <div className="mb-4 text-xs text-interview-warning bg-interview-warning/10 rounded-lg px-3 py-2">
                 {recorder.error}
@@ -298,9 +342,14 @@ export function InterviewRoom({ job }: { job: Job }) {
             )}
             <button
               onClick={handleStart}
-              className="mt-4 px-8 py-3 bg-interview-accent hover:bg-interview-accent-hover text-white rounded-xl font-medium transition-colors"
+              disabled={isPreparing}
+              className={`mt-4 px-8 py-3 rounded-xl font-medium transition-colors ${
+                isPreparing
+                  ? "bg-interview-border text-interview-muted cursor-not-allowed"
+                  : "bg-interview-accent hover:bg-interview-accent-hover text-white"
+              }`}
             >
-              Start Interview
+              {isPreparing ? "Preparing speech engine..." : "Start Interview"}
             </button>
           </div>
         </div>

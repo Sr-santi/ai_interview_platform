@@ -2,51 +2,34 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { debug } from "@/stores/debug";
-import { generateSpeech } from "@/actions/tts";
+import {
+  loadPipeline,
+  loadVoices,
+  synthesize,
+} from "@/lib/tts";
+import type { TextToAudioPipeline } from "@huggingface/transformers";
+
+export type TTSEngine = "onnx" | "speechSynthesis" | "none";
 
 interface TTSHook {
   isSupported: boolean;
   isSpeaking: boolean;
   speak: (text: string) => Promise<void>;
   stop: () => void;
+  loadModel: () => Promise<void>;
+  ttsStatus: "idle" | "loading" | "ready" | "fallback" | "error";
+  loadProgress: number;
+  engine: TTSEngine;
+  setVoice: (voice: string) => void;
+  currentVoice: string;
 }
 
-async function trySupertonic(text: string): Promise<HTMLAudioElement | null> {
-  const t0 = performance.now();
-  debug.tts("supertonic:request", {
-    textLength: text.length,
-    textPreview: text.slice(0, 60),
-  });
+const LOAD_TIMEOUT_MS = 60_000;
 
-  const result = await generateSpeech(text);
-
-  if (result.error || !result.audioBase64) {
-    debug.tts("supertonic:failed", {
-      reason: result.error ?? "no audio returned",
-      durationMs: Math.round(performance.now() - t0),
-    });
-    return null;
-  }
-
-  const audio = new Audio(result.audioBase64);
-
-  audio.addEventListener(
-    "ended",
-    () => {
-      // data URIs don't need revokeObjectURL
-    },
-    { once: true }
-  );
-
-  debug.tts("supertonic:response", {
-    base64Length: result.audioBase64.length,
-    durationMs: Math.round(performance.now() - t0),
-  });
-
-  return audio;
-}
-
-function trySpeechSynthesis(text: string, synthRef: React.MutableRefObject<SpeechSynthesis | null>): Promise<void> {
+function trySpeechSynthesis(
+  text: string,
+  synthRef: React.MutableRefObject<SpeechSynthesis | null>
+): Promise<void> {
   return new Promise((resolve) => {
     const synth = synthRef.current;
     if (!synth) {
@@ -68,149 +51,182 @@ function trySpeechSynthesis(text: string, synthRef: React.MutableRefObject<Speec
       voices.find(
         (v) =>
           v.lang.startsWith("en") &&
-          (v.name.includes("Daniel") || v.name.includes("Samantha") || v.name.includes("Google") || v.name.includes("Natural")),
+          (v.name.includes("Daniel") ||
+            v.name.includes("Samantha") ||
+            v.name.includes("Google") ||
+            v.name.includes("Natural"))
       ) || voices.find((v) => v.lang.startsWith("en"));
 
     if (preferredVoice) {
       utterance.voice = preferredVoice;
-      debug.tts("voiceSelected", {
-        name: preferredVoice.name,
-        lang: preferredVoice.lang,
-      });
     }
 
-    utterance.onstart = () => {
-      debug.tts("playbackStarted", {
-        engine: "speechSynthesis",
-        textLength: text.length,
-        textPreview: text.slice(0, 60),
-      });
-    };
-
+    let ended = false;
     utterance.onend = () => {
-      debug.tts("playbackEnded", { engine: "speechSynthesis" });
-      resolve();
+      if (!ended) { ended = true; resolve(); }
+    };
+    utterance.onerror = () => {
+      if (!ended) { ended = true; resolve(); }
     };
 
-    utterance.onerror = (e) => {
-      debug.tts("playbackError", {
-        engine: "speechSynthesis",
-        error: e.error,
-      });
-      resolve();
-    };
-
-    debug.tts("speak", {
-      engine: "speechSynthesis",
-      textLength: text.length,
-      textPreview: text.slice(0, 60),
-    });
     synth.speak(utterance);
   });
 }
 
 export function useTTS(): TTSHook {
-  const [isSupported, setIsSupported] = useState(false);
+  const [ttsStatus, setTtsStatus] = useState<TTSHook["ttsStatus"]>("idle");
+  const [loadProgress, setLoadProgress] = useState(0);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [currentVoice, setCurrentVoice] = useState("M1");
+
+  const ttsRef = useRef<TextToAudioPipeline | null>(null);
+  const voicesRef = useRef<Record<string, Float32Array> | null>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
+
+  const hasWebGPU = typeof navigator !== "undefined" && "gpu" in navigator;
+  const hasSynth = typeof window !== "undefined" && !!window.speechSynthesis;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-
     const synth = window.speechSynthesis;
-    const hasSupertonic = typeof fetch !== "undefined";
-
-    debug.tts("init", {
-      hasSynth: !!synth,
-      hasSupertonicEndpoint: hasSupertonic,
-      voicesAvailable: synth?.getVoices().length ?? 0,
-    });
-
-    if (synth) {
-      synthRef.current = synth;
-      const loadVoices = () => {
-        debug.tts("voicesLoaded", { count: synth.getVoices().length });
-      };
-      loadVoices();
-      synth.onvoiceschanged = loadVoices;
-    }
-
-    setIsSupported(!!synth || hasSupertonic);
-
+    synthRef.current = synth;
     return () => {
-      debug.tts("unmounting");
       synth?.cancel();
-      audioRef.current?.pause();
+      sourceNodeRef.current?.stop();
+      audioCtxRef.current?.close();
     };
   }, []);
 
-  const speak = useCallback(async (text: string): Promise<void> => {
-    setIsSpeaking(true);
+  const loadModel = useCallback(async () => {
+    if (ttsStatus === "ready" || ttsStatus === "loading") return;
 
-    // 1. Try Supertonic (local dev — fetches directly from browser)
-    debug.tts("speak:trySupertonic", {
-      textLength: text.length,
-      textPreview: text.slice(0, 60),
-    });
-
-    const supertonicAudio = await trySupertonic(text);
-
-    if (supertonicAudio) {
-      audioRef.current = supertonicAudio;
-
-      debug.tts("playbackStarted", {
-        engine: "supertonic",
-        textLength: text.length,
-        textPreview: text.slice(0, 60),
-      });
-
-      return new Promise((resolve) => {
-        supertonicAudio!.onended = () => {
-          debug.tts("playbackEnded", { engine: "supertonic" });
-          setIsSpeaking(false);
-          audioRef.current = null;
-          resolve();
-        };
-        supertonicAudio!.onerror = () => {
-          debug.tts("playbackError", {
-            engine: "supertonic",
-            error: supertonicAudio!.error?.message || "unknown",
-          });
-          setIsSpeaking(false);
-          audioRef.current = null;
-          resolve();
-        };
-        supertonicAudio!.play().catch((err) => {
-          debug.tts("playbackError", {
-            engine: "supertonic",
-            error: err instanceof Error ? err.message : "play failed",
-          });
-          setIsSpeaking(false);
-          audioRef.current = null;
-          resolve();
-        });
-      });
+    if (!hasWebGPU) {
+      debug.tts("init:noWebGPU");
+      setTtsStatus(hasSynth ? "fallback" : "error");
+      return;
     }
 
-    // 2. Fallback to SpeechSynthesis
-    debug.tts("speak:fallbackToSpeechSynthesis");
-    await trySpeechSynthesis(text, synthRef);
-    setIsSpeaking(false);
-  }, []);
+    debug.tts("init:loading");
+    setTtsStatus("loading");
+    setLoadProgress(0);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), LOAD_TIMEOUT_MS);
+
+    try {
+      const [pipeline, voices] = await Promise.race([
+        Promise.all([
+          loadPipeline((pct) => setLoadProgress(pct)),
+          loadVoices(),
+        ]),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Model load timed out")), LOAD_TIMEOUT_MS)
+        ),
+      ]);
+
+      clearTimeout(timeout);
+      ttsRef.current = pipeline;
+      voicesRef.current = voices;
+      debug.tts("init:ready", { voiceCount: Object.keys(voices).length });
+      setTtsStatus("ready");
+      setLoadProgress(100);
+    } catch (err) {
+      clearTimeout(timeout);
+      const message = err instanceof Error ? err.message : "Unknown error";
+      debug.tts("init:failed", { reason: message });
+      setTtsStatus(hasSynth ? "fallback" : "error");
+    }
+  }, [hasWebGPU, hasSynth, ttsStatus]);
+
+  const speak = useCallback(
+    async (text: string): Promise<void> => {
+      setIsSpeaking(true);
+
+      // Primary: ONNX Supertonic
+      if (ttsRef.current && voicesRef.current && ttsStatus === "ready") {
+        const embedding = voicesRef.current[currentVoice];
+        if (!embedding) {
+          debug.tts("speak:voiceNotFound", { voice: currentVoice });
+          setIsSpeaking(false);
+          return;
+        }
+
+        try {
+          const { audio, sampleRate } = await synthesize(
+            text,
+            ttsRef.current,
+            embedding,
+            20,
+            1.1
+          );
+
+          // Play via Web Audio API
+          if (!audioCtxRef.current) {
+            audioCtxRef.current = new AudioContext();
+          }
+          const ctx = audioCtxRef.current;
+          if (ctx.state === "suspended") await ctx.resume();
+
+          const audioBuffer = ctx.createBuffer(1, audio.length, sampleRate);
+          audioBuffer.getChannelData(0).set(audio);
+
+          const source = ctx.createBufferSource();
+          source.buffer = audioBuffer;
+          source.connect(ctx.destination);
+          sourceNodeRef.current = source;
+
+          await new Promise<void>((resolve) => {
+            source.onended = () => {
+              sourceNodeRef.current = null;
+              setIsSpeaking(false);
+              resolve();
+            };
+            source.start();
+          });
+          return;
+        } catch (err) {
+          debug.tts("speak:onnxFailed", {
+            error: err instanceof Error ? err.message : "unknown",
+          });
+          // Fall through to SpeechSynthesis
+        }
+      }
+
+      // Fallback: SpeechSynthesis
+      debug.tts("speak:fallback");
+      await trySpeechSynthesis(text, synthRef);
+      setIsSpeaking(false);
+    },
+    [ttsStatus, currentVoice]
+  );
 
   const stop = useCallback(() => {
-    debug.tts("stop");
-
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-      audioRef.current = null;
+    if (sourceNodeRef.current) {
+      sourceNodeRef.current.stop();
+      sourceNodeRef.current = null;
     }
-
     synthRef.current?.cancel();
     setIsSpeaking(false);
   }, []);
 
-  return { isSupported, isSpeaking, speak, stop };
+  const setVoice = useCallback((voice: string) => {
+    if (["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"].includes(voice)) {
+      setCurrentVoice(voice);
+    }
+  }, []);
+
+  return {
+    isSupported: hasSynth || hasWebGPU,
+    isSpeaking,
+    speak,
+    stop,
+    loadModel,
+    ttsStatus,
+    loadProgress,
+    engine: ttsStatus === "ready" ? "onnx" : hasSynth ? "speechSynthesis" : "none",
+    setVoice,
+    currentVoice,
+  };
 }
