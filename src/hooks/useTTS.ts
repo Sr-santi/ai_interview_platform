@@ -2,11 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { debug } from "@/stores/debug";
-import {
-  loadPipeline,
-  loadVoices,
-  synthesize,
-} from "@/lib/tts";
+import { loadPipeline, loadVoices, synthesize } from "@/lib/tts";
 import type { TextToAudioPipeline } from "@huggingface/transformers";
 
 export type TTSEngine = "onnx" | "speechSynthesis" | "none";

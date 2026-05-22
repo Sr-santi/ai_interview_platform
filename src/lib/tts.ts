@@ -2,7 +2,7 @@ import { pipeline, env } from "@huggingface/transformers";
 import type { TextToAudioPipeline, RawAudio } from "@huggingface/transformers";
 
 if (env.backends?.onnx) {
-  env.backends.onnx.logSeverityLevel = 3;
+  env.backends.onnx.logSeverityLevel = 4;
   env.backends.onnx.logVerbosityLevel = 0;
 }
 
