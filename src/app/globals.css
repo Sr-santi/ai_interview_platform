@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --color-interview-bg: #0f1117;
+  --color-interview-surface: #1a1d27;
+  --color-interview-border: #2a2d3a;
+  --color-interview-accent: #6366f1;
+  --color-interview-accent-hover: #818cf8;
+  --color-interview-text: #e2e8f0;
+  --color-interview-muted: #94a3b8;
+  --color-interview-success: #22c55e;
+  --color-interview-warning: #f59e0b;
+  --color-interview-danger: #ef4444;
+}
+
+body {
+  background-color: var(--color-interview-bg);
+  color: var(--color-interview-text);
+  font-family: var(--font-sans, system-ui, sans-serif);
+}
