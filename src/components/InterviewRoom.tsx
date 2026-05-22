@@ -97,28 +97,32 @@ function EvaluationView({
         <div className="text-5xl font-bold text-interview-accent">{evaluation.score}</div>
         <div className="text-sm text-interview-muted mt-1">Overall Score</div>
       </div>
-      <div>
-        <h3 className="text-sm font-semibold text-interview-success mb-2">Strengths</h3>
-        <ul className="space-y-1.5">
-          {evaluation.strengths.map((s, i) => (
-            <li key={i} className="text-sm text-interview-text flex items-start gap-2">
-              <span className="text-interview-success mt-0.5">+</span>
-              {s}
-            </li>
-          ))}
-        </ul>
-      </div>
-      <div>
-        <h3 className="text-sm font-semibold text-interview-warning mb-2">Areas for Growth</h3>
-        <ul className="space-y-1.5">
-          {evaluation.concerns.map((c, i) => (
-            <li key={i} className="text-sm text-interview-text flex items-start gap-2">
-              <span className="text-interview-warning mt-0.5">!</span>
-              {c}
-            </li>
-          ))}
-        </ul>
-      </div>
+      {evaluation.strengths.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-interview-success mb-2">Strengths</h3>
+          <ul className="space-y-1.5">
+            {evaluation.strengths.map((s, i) => (
+              <li key={i} className="text-sm text-interview-text flex items-start gap-2">
+                <span className="text-interview-success mt-0.5">+</span>
+                {s}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {evaluation.concerns.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-interview-warning mb-2">Areas for Growth</h3>
+          <ul className="space-y-1.5">
+            {evaluation.concerns.map((c, i) => (
+              <li key={i} className="text-sm text-interview-text flex items-start gap-2">
+                <span className="text-interview-warning mt-0.5">!</span>
+                {c}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

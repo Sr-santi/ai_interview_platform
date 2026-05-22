@@ -95,28 +95,32 @@ export function SessionReplay({ transcript, evaluation, jobTitle, createdAt }: S
             <div className="text-xs text-interview-muted">Overall Score</div>
           </div>
           <div className="space-y-3">
-            <div>
-              <h3 className="text-xs font-semibold text-interview-success mb-2">Strengths</h3>
-              <ul className="space-y-1">
-                {evaluation.strengths.map((s, i) => (
-                  <li key={i} className="text-sm text-interview-text flex items-start gap-2">
-                    <span className="text-interview-success mt-0.5">+</span>
-                    {s}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <h3 className="text-xs font-semibold text-interview-warning mb-2">Areas for Growth</h3>
-              <ul className="space-y-1">
-                {evaluation.concerns.map((c, i) => (
-                  <li key={i} className="text-sm text-interview-text flex items-start gap-2">
-                    <span className="text-interview-warning mt-0.5">!</span>
-                    {c}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            {evaluation.strengths.length > 0 && (
+              <div>
+                <h3 className="text-xs font-semibold text-interview-success mb-2">Strengths</h3>
+                <ul className="space-y-1">
+                  {evaluation.strengths.map((s, i) => (
+                    <li key={i} className="text-sm text-interview-text flex items-start gap-2">
+                      <span className="text-interview-success mt-0.5">+</span>
+                      {s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {evaluation.concerns.length > 0 && (
+              <div>
+                <h3 className="text-xs font-semibold text-interview-warning mb-2">Areas for Growth</h3>
+                <ul className="space-y-1">
+                  {evaluation.concerns.map((c, i) => (
+                    <li key={i} className="text-sm text-interview-text flex items-start gap-2">
+                      <span className="text-interview-warning mt-0.5">!</span>
+                      {c}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
       )}

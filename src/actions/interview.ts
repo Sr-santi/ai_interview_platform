@@ -226,11 +226,12 @@ Total score must reflect the sum across all 4 dimensions.
 
 Respond with ONLY a raw JSON object (no markdown, no code fences):
 {
-  "strengths": ["specific, evidence-backed strength"] or [],
-  "concerns": ["specific concern with evidence from transcript"],
+  "strengths": [],
+  "concerns": [],
   "score": 50
 }
 
+Use an empty array for strengths or concerns if none apply.
 Score is 0-100, based on the rubric above. Be harsh — it's more useful than being polite.`;
 
   const controller = new AbortController();
@@ -257,22 +258,45 @@ Score is 0-100, based on the rubric above. Be harsh — it's more useful than be
       text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
     }
 
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    let jsonMatch = text.match(/\{[\s\S]*\}/);
+
+    // Salvage truncated JSON — same recovery as parseLLMResponse
+    if (!jsonMatch) {
+      const salvageAttempts = ['"]}', '"]}]', '"]}'];
+      for (const suffix of salvageAttempts) {
+        try {
+          const closed = text + suffix;
+          const match = closed.match(/\{[\s\S]*\}/);
+          if (match) {
+            JSON.parse(match[0]); // validate
+            jsonMatch = match;
+            break;
+          }
+        } catch {
+          // continue to next attempt
+        }
+      }
+    }
+
     if (!jsonMatch) return { evaluation: null, error: "No JSON found in evaluation" };
 
-    const parsed = JSON.parse(jsonMatch[0]);
-    if (
-      Array.isArray(parsed.strengths) &&
-      Array.isArray(parsed.concerns) &&
-      typeof parsed.score === "number"
-    ) {
-      return {
-        evaluation: {
-          strengths: parsed.strengths.map(String),
-          concerns: parsed.concerns.map(String),
-          score: parsed.score,
-        },
-      };
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (
+        Array.isArray(parsed.strengths) &&
+        Array.isArray(parsed.concerns) &&
+        typeof parsed.score === "number"
+      ) {
+        return {
+          evaluation: {
+            strengths: parsed.strengths.map(String),
+            concerns: parsed.concerns.map(String),
+            score: parsed.score,
+          },
+        };
+      }
+    } catch {
+      // JSON parse failed — fall through
     }
 
     return { evaluation: null, error: "Invalid evaluation format" };

@@ -130,6 +130,11 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
       elapsedSeconds: 0,
       maxDurationSeconds,
       timerWarning: "normal",
+      lastResponse: null,
+      evaluation: null,
+      sessionId: null,
+      accumulatedSkills: [],
+      coveredTopics: [],
     });
 
     // Start the session timer
@@ -279,7 +284,7 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
         }
       } else {
         debug.interview("evaluationFailed", { error: evalResult.error });
-        set({ error: evalResult.error ?? "Evaluation failed" });
+        set({ error: evalResult.error ?? "Evaluation failed", evaluation: null });
       }
 
       stopTimerInStore();

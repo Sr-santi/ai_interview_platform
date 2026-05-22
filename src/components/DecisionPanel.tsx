@@ -25,32 +25,45 @@ export function DecisionPanel({
 
   return (
     <>
-      {/* Toggle button */}
-      <button
-        onClick={onToggle}
-        className="fixed right-4 top-20 z-30 w-8 h-8 rounded-full bg-interview-surface border border-interview-border hover:border-interview-accent/50 text-interview-muted hover:text-interview-text flex items-center justify-center transition-colors"
-        aria-label={isOpen ? "Close decision panel" : "Open decision panel"}
-      >
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d={isOpen ? "M6 18L18 6M6 6l12 12" : "M4 6h16M4 12h16M4 18h16"}
-          />
-        </svg>
-      </button>
+      {/* Toggle button — only visible when panel is closed */}
+      {!isOpen && (
+        <button
+          onClick={onToggle}
+          className="fixed left-4 top-20 z-30 w-8 h-8 rounded-full bg-interview-surface border border-interview-border hover:border-interview-accent/50 text-interview-muted hover:text-interview-text flex items-center justify-center transition-colors"
+          aria-label="Open decision panel"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 6h16M4 12h16M4 18h16"
+            />
+          </svg>
+        </button>
+      )}
 
       {/* Panel */}
       {isOpen && (
-        <div className="fixed right-0 top-16 bottom-0 w-72 sm:w-80 bg-interview-surface border-l border-interview-border z-20 overflow-y-auto">
+        <div className="fixed left-0 top-16 bottom-0 w-72 sm:w-80 bg-interview-surface border-r border-interview-border z-20 overflow-y-auto">
           <div className="p-4 pt-2">
-            <h2 className="text-sm font-semibold text-interview-text mb-3 flex items-center gap-2">
-              <svg className="w-4 h-4 text-interview-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-              </svg>
-              Decision Panel
-            </h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-interview-text flex items-center gap-2">
+                <svg className="w-4 h-4 text-interview-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                </svg>
+                Decision Panel
+              </h2>
+              <button
+                onClick={onToggle}
+                className="w-6 h-6 rounded-full bg-interview-bg border border-interview-border hover:border-interview-accent/50 text-interview-muted hover:text-interview-text flex items-center justify-center transition-colors shrink-0"
+                aria-label="Close decision panel"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
 
             {!hasAnyData ? (
               <div className="space-y-4">
