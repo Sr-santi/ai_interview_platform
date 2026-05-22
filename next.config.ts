@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "2mb",
     },
   },
+  serverExternalPackages: ["@prisma/client"],
 };
 
 export default nextConfig;

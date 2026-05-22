@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMediaRecorder } from "@/hooks/useMediaRecorder";
 import { useTTS } from "@/hooks/useTTS";
+import { useCamera } from "@/hooks/useCamera";
 import { useInterviewStore } from "@/stores/interview";
 import { debug } from "@/stores/debug";
 import { DebugPanel } from "@/components/DebugPanel";
+import { DecisionPanel } from "@/components/DecisionPanel";
 import { transcribeAudio } from "@/actions/stt";
 import type { Job } from "@/lib/types";
 
@@ -62,7 +64,7 @@ function TranscriptView({ entries }: { entries: { role: string; text: string }[]
   if (entries.length === 0) return null;
 
   return (
-    <div className="flex-1 overflow-y-auto space-y-4 px-2 py-4">
+    <div className="flex-1 overflow-y-auto space-y-4 px-2 py-4" role="log" aria-live="polite" aria-label="Interview transcript">
       {entries.map((entry, i) => (
         <div key={i} className={`flex ${entry.role === "candidate" ? "justify-end" : "justify-start"}`}>
           <div
@@ -126,11 +128,33 @@ function EvaluationView({
 export function InterviewRoom({ job }: { job: Job }) {
   const recorder = useMediaRecorder();
   const tts = useTTS();
+  const camera = useCamera();
   const interview = useInterviewStore();
+
+  const availableTopics = useMemo(() => {
+    if (!job.questionPack) return [];
+    const topics: string[] = [];
+    const pack = job.questionPack as { behavioral?: { category: string }[]; technical?: { category: string }[] };
+    if (pack.behavioral) {
+      for (const q of pack.behavioral) topics.push(q.category);
+    }
+    if (pack.technical) {
+      for (const q of pack.technical) topics.push(q.category);
+    }
+    return topics;
+  }, [job.questionPack]);
 
   const [transcribing, setTranscribing] = useState(false);
   const [textInput, setTextInput] = useState("");
+  const [panelOpen, setPanelOpen] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const ttsEffectRunRef = useRef(false);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.srcObject = camera.stream;
+    }
+  }, [camera.stream]);
 
   // ── Orchestration: TTS → listening ──
   useEffect(() => {
@@ -250,7 +274,7 @@ export function InterviewRoom({ job }: { job: Job }) {
   if (interview.state === "idle") {
     return (
       <>
-        <div className="flex flex-col items-center justify-center py-16 px-4">
+        <div className="flex flex-col items-center justify-center py-12 sm:py-16 px-3 sm:px-4">
           <div className="rounded-xl border border-interview-border bg-interview-surface p-8 text-center max-w-md w-full">
             <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-interview-accent/10 flex items-center justify-center">
               <svg className="w-8 h-8 text-interview-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -285,7 +309,7 @@ export function InterviewRoom({ job }: { job: Job }) {
   if (interview.state === "complete") {
     return (
       <>
-        <div className="flex flex-col max-w-2xl mx-auto px-4 py-8">
+        <div className="flex flex-col max-w-2xl mx-auto px-3 sm:px-4 py-6 sm:py-8">
           <div className="text-center mb-6">
             <h2 className="text-xl font-bold text-interview-text">Interview Complete</h2>
             <p className="text-interview-muted text-sm mt-1">
@@ -323,9 +347,9 @@ export function InterviewRoom({ job }: { job: Job }) {
 
   return (
     <>
-      <div className="flex flex-col h-[calc(100vh-3rem)] max-w-2xl mx-auto px-4">
+      <div className="flex flex-col min-h-[calc(100dvh-3rem)] max-w-2xl mx-auto px-3 sm:px-4">
         {/* Progress */}
-        <div className="py-3 flex items-center justify-between border-b border-interview-border/50">
+        <div className="py-2 sm:py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 sm:gap-0 border-b border-interview-border/50">
           <div className="flex items-center gap-4">
             <span className="text-xs text-interview-muted">
               Question {interview.questionCount + 1} of {MAX_QUESTIONS}
@@ -449,16 +473,36 @@ export function InterviewRoom({ job }: { job: Job }) {
             )}
 
             {/* Controls */}
-            <div className="py-4 border-t border-interview-border/50 flex items-center justify-center gap-6">
+            <div className="py-4 border-t border-interview-border/50 flex items-center justify-center gap-4 sm:gap-6">
               <MicButton
                 isActive={isRecording}
                 onClick={handleMicToggle}
                 disabled={false}
               />
               {!isRecording && (
-                <div className="text-xs text-interview-muted text-center max-w-[12rem]">
-                  Tap to record your answer
-                </div>
+                <>
+                  <button
+                    onClick={() => camera.isActive ? camera.stopCamera() : camera.startCamera()}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 border ${
+                      camera.isActive
+                        ? "bg-green-500/20 border-green-500/40 text-green-400"
+                        : "bg-interview-surface border-interview-border hover:border-interview-accent/50 text-interview-muted"
+                    }`}
+                    aria-label={camera.isActive ? "Turn off camera" : "Turn on camera"}
+                  >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                      />
+                    </svg>
+                  </button>
+                  <div className="text-xs text-interview-muted text-center max-w-[12rem]">
+                    Tap to record your answer
+                  </div>
+                </>
               )}
             </div>
 
@@ -476,6 +520,7 @@ export function InterviewRoom({ job }: { job: Job }) {
                       }
                     }}
                     placeholder="Or type your answer here..."
+                    aria-label="Type your interview answer"
                     rows={2}
                     className="flex-1 resize-none rounded-xl px-3 py-2 text-sm bg-interview-surface border border-interview-border text-interview-text placeholder:text-interview-muted focus:border-interview-accent/50 focus:outline-none"
                   />
@@ -530,6 +575,36 @@ export function InterviewRoom({ job }: { job: Job }) {
         )}
       </div>
 
+      {camera.isActive && (
+        <div className="fixed bottom-20 right-4 z-20 w-36 sm:w-48 rounded-xl overflow-hidden border-2 border-interview-accent/40 shadow-lg shadow-interview-accent/20 bg-interview-bg">
+          <video
+            ref={videoRef}
+            autoPlay
+            muted
+            playsInline
+            className="w-full h-auto block -scale-x-100"
+          />
+          <div className="absolute top-1.5 left-1.5">
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-500/80 text-white">
+              LIVE
+            </span>
+          </div>
+          {camera.error && (
+            <div className="absolute inset-0 flex items-center justify-center bg-interview-bg/80">
+              <p className="text-[10px] text-interview-danger px-2 text-center">{camera.error}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      <DecisionPanel
+        thoughtProcess={interview.lastResponse?.thought_process}
+        accumulatedSkills={interview.accumulatedSkills}
+        coveredTopics={interview.coveredTopics}
+        availableTopics={availableTopics}
+        isOpen={panelOpen}
+        onToggle={() => setPanelOpen(!panelOpen)}
+      />
       <DebugPanel />
     </>
   );

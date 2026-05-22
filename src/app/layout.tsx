@@ -15,6 +15,20 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen antialiased" suppressHydrationWarning>
+        <noscript>
+          <div
+            style={{
+              background: "#ef4444",
+              color: "#fff",
+              padding: "12px 16px",
+              fontSize: "14px",
+              textAlign: "center",
+              fontFamily: "system-ui, sans-serif",
+            }}
+          >
+            This application requires JavaScript. Please enable JavaScript in your browser settings.
+          </div>
+        </noscript>
         <Providers>{children}</Providers>
       </body>
     </html>

@@ -12,6 +12,7 @@ model Job {
   title             String
   description       String
   systemPrompt      String
+  questionPack      Json?
   maxDurationSeconds Int      @default(1200)
   sessions          Session[]
 }

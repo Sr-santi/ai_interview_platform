@@ -3,6 +3,10 @@ export interface Job {
   title: string;
   description: string;
   systemPrompt: string;
+  questionPack?: {
+    behavioral?: { category: string; text: string; followUpHints?: string[] }[];
+    technical?: { category: string; text: string; followUpHints?: string[] }[];
+  };
   maxDurationSeconds: number | null;
 }
 
@@ -29,4 +33,5 @@ export interface LLMResponse {
   thought_process: string;
   skills_detected: string[];
   spoken_response: string;
+  category?: string;
 }

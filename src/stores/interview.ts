@@ -27,6 +27,11 @@ interface InterviewStore {
   sessionId: string | null;
   error: string | null;
 
+  // Decision panel tracking
+  accumulatedSkills: string[];
+  coveredTopics: string[];
+  availableTopics: string[];
+
   // Session timer
   elapsedSeconds: number;
   maxDurationSeconds: number | null;
@@ -100,6 +105,10 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
   sessionId: null,
   error: null,
 
+  accumulatedSkills: [],
+  coveredTopics: [],
+  availableTopics: [],
+
   elapsedSeconds: 0,
   maxDurationSeconds: null,
   timerWarning: "normal",
@@ -127,7 +136,7 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
     startTimerInStore();
 
     const t0 = performance.now();
-    const result = await conductInterviewTurn(jobId, initialHistory, 0);
+    const result = await conductInterviewTurn(jobId, initialHistory, 0, []);
     debug.llm("conductInterviewTurn", {
       durationMs: Math.round(performance.now() - t0),
       questionNumber: 1,
@@ -151,12 +160,20 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
     };
     const historyWithQuestion = [...initialHistory, interviewerEntry];
 
+    const newSkills = result.response.skills_detected.map((s) => s.toLowerCase().trim());
+    const accumulatedSkills = [...new Set(newSkills)];
+    const coveredTopics = result.response.category ? [result.response.category] : [];
+
     debug.interview("firstQuestionReady", {
       spoken: result.response.spoken_response.slice(0, 80),
+      category: result.response.category,
+      skills: accumulatedSkills,
     });
     set({
       transcript: historyWithQuestion,
       lastResponse: result.response,
+      accumulatedSkills,
+      coveredTopics,
       state: setStateLog(get(), "speaking"),
     });
   },
@@ -272,7 +289,7 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
       set({ state: setStateLog(get(), "thinking") });
 
       const t0 = performance.now();
-      const result = await conductInterviewTurn(jobId, s.transcript, newQCount);
+      const result = await conductInterviewTurn(jobId, s.transcript, newQCount, s.coveredTopics);
       debug.llm("conductInterviewTurn", {
         durationMs: Math.round(performance.now() - t0),
         questionNumber: newQCount + 1,
@@ -282,9 +299,8 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
 
       if (result.error || !result.response) {
         debug.interview("questionFailed", { error: result.error });
-        stopTimerInStore();
         set({
-          state: setStateLog(get(), "idle"),
+          state: setStateLog(get(), "answered"),
           error: result.error ?? "No response from interviewer",
         });
         return;
@@ -296,9 +312,17 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
       };
       const historyWithQuestion = [...s.transcript, interviewerEntry];
 
+      const newSkills = result.response.skills_detected.map((s) => s.toLowerCase().trim());
+      const mergedSkills = [...new Set([...s.accumulatedSkills, ...newSkills])];
+      const mergedTopics = result.response.category
+        ? [...new Set([...s.coveredTopics, result.response.category])]
+        : s.coveredTopics;
+
       set({
         transcript: historyWithQuestion,
         lastResponse: result.response,
+        accumulatedSkills: mergedSkills,
+        coveredTopics: mergedTopics,
         state: setStateLog(get(), "speaking"),
       });
     }
@@ -315,6 +339,9 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
       evaluation: null,
       sessionId: null,
       error: null,
+      accumulatedSkills: [],
+      coveredTopics: [],
+      availableTopics: [],
       elapsedSeconds: 0,
       maxDurationSeconds: null,
       timerWarning: "normal",

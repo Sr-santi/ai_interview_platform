@@ -1,10 +1,19 @@
 import { prisma } from "@/lib/prisma";
 import { JobCard } from "@/components/JobCard";
+import type { Job } from "@/lib/types";
 
 export default async function Home() {
-  const jobs = await prisma.job.findMany({
+  const dbJobs = await prisma.job.findMany({
     orderBy: { title: "asc" },
   });
+
+  const jobs: Job[] = dbJobs.map((j) => ({
+    id: j.id,
+    title: j.title,
+    description: j.description,
+    systemPrompt: j.systemPrompt,
+    maxDurationSeconds: j.maxDurationSeconds,
+  }));
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center px-4 py-16">

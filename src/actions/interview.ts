@@ -10,7 +10,9 @@ const MAX_QUESTIONS = 6;
 function buildInterviewPrompt(
   systemPrompt: string,
   history: TranscriptEntry[],
-  questionCount: number
+  questionCount: number,
+  questionPack?: unknown,
+  coveredTopics?: string[]
 ): string {
   const remaining = MAX_QUESTIONS - questionCount;
 
@@ -22,16 +24,28 @@ function buildInterviewPrompt(
     }
   }
 
+  let questionPackBlock = "";
+  if (questionPack) {
+    questionPackBlock = `\nAvailable question pack:\n${JSON.stringify(questionPack, null, 2)}\n\nUse these questions as your primary source. You may adapt wording slightly for flow.`;
+  }
+
+  let coveredBlock = "";
+  if (coveredTopics && coveredTopics.length > 0) {
+    coveredBlock = `\nTopics already covered: ${coveredTopics.join(", ")}. Avoid repeating these categories.`;
+  }
+
   const isFinalQuestion = remaining === 1;
   const needsFollowUp =
     questionCount >= 3 &&
     history.filter((e) => e.role === "interviewer").length -
       history.filter((e) => e.role === "candidate").length <=
-      1;
+       1;
 
   return `You are conducting an AI voice interview.
 
 ${systemPrompt}
+${questionPackBlock}
+${coveredBlock}
 
 ${historyBlock}
 
@@ -44,7 +58,8 @@ Ask exactly ONE question. Be conversational - under 30 words.
 You MUST respond with ONLY a raw JSON object (no markdown, no code fences):
 {
   "thought_process": "why you chose this question",
-  "skills_detected": ["skill identifiers"],
+  "skills_detected": ["skill identifiers from the candidate's answer"],
+  "category": "the category name from the question pack you selected",
   "spoken_response": "the question text to speak"
 }`;
 }
@@ -57,33 +72,70 @@ function parseLLMResponse(raw: string): LLMResponse | null {
     text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   }
 
-  // Try to find a JSON object in the response
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) return null;
+  // Try to find a complete JSON object
+  let jsonMatch = text.match(/\{[\s\S]*\}/);
 
-  try {
-    const parsed = JSON.parse(jsonMatch[0]);
-    if (
-      typeof parsed.thought_process === "string" &&
-      Array.isArray(parsed.skills_detected) &&
-      typeof parsed.spoken_response === "string"
-    ) {
+  // If no closing brace (truncated JSON due to token limits), try to salvage
+  if (!jsonMatch) {
+    // Attempt to close the truncated JSON by appending likely endings
+    const salvageAttempts = ['"]}', '"]}]', '"]}'];
+    for (const suffix of salvageAttempts) {
+      try {
+        const closed = text + suffix;
+        const match = closed.match(/\{[\s\S]*\}/);
+        if (match) {
+          JSON.parse(match[0]); // validate
+          jsonMatch = match;
+          break;
+        }
+      } catch {
+        // continue to next attempt
+      }
+    }
+  }
+
+  // If we have a JSON match, parse and validate
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (
+        typeof parsed.thought_process === "string" &&
+        Array.isArray(parsed.skills_detected) &&
+        typeof parsed.spoken_response === "string"
+      ) {
+        return {
+          thought_process: parsed.thought_process,
+          skills_detected: parsed.skills_detected.map(String),
+          spoken_response: parsed.spoken_response,
+          category: typeof parsed.category === "string" ? parsed.category : undefined,
+        };
+      }
+    } catch {
+      // JSON parse failed, fall through to fallback
+    }
+  }
+
+  // Last resort: extract spoken_response via regex, common when only that field exists
+  const spokenMatch = text.match(/"spoken_response"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (spokenMatch) {
+    const spokenResponse = spokenMatch[1].replace(/\\(.)/g, "$1");
+    if (spokenResponse.trim()) {
       return {
-        thought_process: parsed.thought_process,
-        skills_detected: parsed.skills_detected.map(String),
-        spoken_response: parsed.spoken_response,
+        thought_process: "Fallback: extracted from truncated response",
+        skills_detected: [],
+        spoken_response: spokenResponse.trim(),
       };
     }
-    return null;
-  } catch {
-    return null;
   }
+
+  return null;
 }
 
 export async function conductInterviewTurn(
   jobId: string,
   history: TranscriptEntry[],
-  questionCount: number
+  questionCount: number,
+  coveredTopics?: string[]
 ): Promise<{ response: LLMResponse | null; error?: string }> {
   const job = await prisma.job.findUnique({ where: { id: jobId } });
   if (!job) return { response: null, error: "Job not found" };
@@ -91,16 +143,26 @@ export async function conductInterviewTurn(
   const prompt = buildInterviewPrompt(
     job.systemPrompt,
     history,
-    questionCount + 1
+    questionCount + 1,
+    job.questionPack as Record<string, unknown> | undefined,
+    coveredTopics
   );
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+
   try {
-    const completion = await openrouter.chat.completions.create({
-      model: INTERVIEW_MODEL,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.7,
-      max_tokens: 300,
-    });
+    const completion = await openrouter.chat.completions.create(
+      {
+        model: INTERVIEW_MODEL,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.7,
+        max_tokens: 500,
+      },
+      { signal: controller.signal }
+    );
+
+    clearTimeout(timeout);
 
     const raw = completion.choices[0]?.message?.content;
     if (!raw) return { response: null, error: "Empty LLM response" };
@@ -112,6 +174,10 @@ export async function conductInterviewTurn(
 
     return { response: parsed };
   } catch (err) {
+    clearTimeout(timeout);
+    if (err instanceof DOMException || (err instanceof Error && err.name === "AbortError")) {
+      return { response: null, error: "OpenRouter request timed out (30s)" };
+    }
     const message = err instanceof Error ? err.message : "Unknown error";
     return { response: null, error: `OpenRouter error: ${message}` };
   }
@@ -136,22 +202,52 @@ ${job.systemPrompt.slice(0, 300)}
 Full interview transcript:
 ${transcriptBlock}
 
-Provide a structured evaluation. Respond with ONLY a raw JSON object (no markdown, no code fences):
+CRITICAL INSTRUCTIONS:
+Do NOT fabricate strengths. If the candidate gave non-answers, refused to engage, 
+or was unprofessional, set "strengths" to an empty array [].
+Do NOT interpret trolling, dismissive responses, or "I don't know" as a positive trait.
+
+Score interpretation — be strict and anchor to this scale:
+- 0-15: Non-engagement. Candidate refuses to answer, gives nonsense responses 
+  (e.g., "pranked", "give me the job", "who knows"), or is unprofessional.
+- 16-30: Minimal. Vague one-liners with no frameworks, examples, or depth.
+- 31-50: Basic. Some relevant knowledge but lacks specifics, structure, or clear communication.
+- 51-75: Solid. Demonstrates frameworks, concrete examples, and structured thinking.
+- 76-100: Excellent. Deep domain expertise, clear communication, nuanced reasoning, 
+  and strong problem-solving approach.
+
+Scoring dimensions (weighted equally, 0-25 points each):
+1. Technical/domain knowledge — does the candidate demonstrate relevant expertise?
+2. Communication clarity — are answers well-structured and articulate?
+3. Examples & frameworks — does the candidate use specific cases or established methodologies?
+4. Problem-solving approach — does the candidate show analytical thinking?
+
+Total score must reflect the sum across all 4 dimensions.
+
+Respond with ONLY a raw JSON object (no markdown, no code fences):
 {
-  "strengths": ["strength 1", "strength 2", "strength 3"],
-  "concerns": ["concern 1", "concern 2"],
-  "score": 75
+  "strengths": ["specific, evidence-backed strength"] or [],
+  "concerns": ["specific concern with evidence from transcript"],
+  "score": 50
 }
 
-Score is 0-100. Be honest and specific.`;
+Score is 0-100, based on the rubric above. Be harsh — it's more useful than being polite.`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
 
   try {
-    const completion = await openrouter.chat.completions.create({
-      model: INTERVIEW_MODEL,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.5,
-      max_tokens: 400,
-    });
+    const completion = await openrouter.chat.completions.create(
+      {
+        model: INTERVIEW_MODEL,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.3,
+        max_tokens: 600,
+      },
+      { signal: controller.signal }
+    );
+
+    clearTimeout(timeout);
 
     const raw = completion.choices[0]?.message?.content;
     if (!raw) return { evaluation: null, error: "Empty evaluation response" };
@@ -181,6 +277,10 @@ Score is 0-100. Be honest and specific.`;
 
     return { evaluation: null, error: "Invalid evaluation format" };
   } catch (err) {
+    clearTimeout(timeout);
+    if (err instanceof DOMException || (err instanceof Error && err.name === "AbortError")) {
+      return { evaluation: null, error: "Evaluation request timed out (30s)" };
+    }
     const message = err instanceof Error ? err.message : "Unknown error";
     return { evaluation: null, error: `Evaluation error: ${message}` };
   }
@@ -192,14 +292,19 @@ export async function saveSession(
   evaluation: Evaluation
 ): Promise<{ sessionId: string | null; error?: string }> {
   try {
-    const session = await prisma.session.create({
-      data: {
-        jobId,
-        transcript: transcript as unknown as Prisma.InputJsonValue,
-        evaluation: evaluation as unknown as Prisma.InputJsonValue,
-      },
-    });
-    return { sessionId: session.id };
+    const result = await Promise.race([
+      prisma.session.create({
+        data: {
+          jobId,
+          transcript: transcript as unknown as Prisma.InputJsonValue,
+          evaluation: evaluation as unknown as Prisma.InputJsonValue,
+        },
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Save timed out (10s)")), 10000)
+      ),
+    ]);
+    return { sessionId: result.id };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return { sessionId: null, error: `Save error: ${message}` };

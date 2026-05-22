@@ -11,9 +11,6 @@
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio"
   },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
-  },
   "dependencies": {
     "@prisma/client": "^6.5.0",
     "@tanstack/react-query": "^5.100.11",

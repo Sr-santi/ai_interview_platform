@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
 import { InterviewRoom } from "@/components/InterviewRoom";
+import type { Job } from "@/lib/types";
 
 export default async function InterviewRoomPage({
   params,
@@ -9,13 +10,22 @@ export default async function InterviewRoomPage({
 }) {
   const { jobId } = await params;
 
-  const job = await prisma.job.findUnique({
+  const dbJob = await prisma.job.findUnique({
     where: { id: jobId },
   });
 
-  if (!job) {
+  if (!dbJob) {
     notFound();
   }
+
+  const job: Job = {
+    id: dbJob.id,
+    title: dbJob.title,
+    description: dbJob.description,
+    systemPrompt: dbJob.systemPrompt,
+    maxDurationSeconds: dbJob.maxDurationSeconds,
+    questionPack: dbJob.questionPack as Job["questionPack"] | undefined,
+  };
 
   return (
     <div>
