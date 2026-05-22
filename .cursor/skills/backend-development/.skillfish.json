@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "backend-development",
+  "owner": "hongbietcode",
+  "repo": "synthetic-claude",
+  "path": "plugins/basic-workflow/skills/backend-development",
+  "branch": "main",
+  "sha": "fe7c376b557944246e5e232de1296860106bfe17",
+  "source": "manual"
+}
