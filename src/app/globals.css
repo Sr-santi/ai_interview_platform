@@ -18,3 +18,27 @@ body {
   color: var(--color-interview-text);
   font-family: var(--font-sans, system-ui, sans-serif);
 }
+
+/* Custom scrollbar — dark themed, thin */
+::-webkit-scrollbar {
+  width: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-interview-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-interview-muted);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-interview-border) transparent;
+}

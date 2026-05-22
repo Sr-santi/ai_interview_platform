@@ -6,6 +6,7 @@ import type { TranscriptEntry, LLMResponse, Evaluation } from "@/lib/types";
 export type InterviewState =
   | "idle"
   | "listening"
+  | "answered"
   | "thinking"
   | "speaking"
   | "evaluating"
@@ -24,7 +25,9 @@ interface InterviewStore {
 
   start: (jobId: string) => Promise<void>;
   setListeningState: () => void;
-  submitAnswer: (jobId: string, text: string) => Promise<void>;
+  submitAnswer: (jobId: string, text: string) => void;
+  retryAnswer: () => void;
+  advanceQuestion: (jobId: string) => Promise<void>;
   reset: () => void;
 }
 
@@ -54,10 +57,7 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
       },
     ];
 
-    set({
-      transcript: initialHistory,
-      questionCount: 0,
-    });
+    set({ transcript: initialHistory, questionCount: 0 });
 
     const t0 = performance.now();
     const result = await conductInterviewTurn(jobId, initialHistory, 0);
@@ -77,10 +77,17 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
       return;
     }
 
+    const interviewerEntry: TranscriptEntry = {
+      role: "interviewer",
+      text: result.response.spoken_response,
+    };
+    const historyWithQuestion = [...initialHistory, interviewerEntry];
+
     debug.interview("firstQuestionReady", {
       spoken: result.response.spoken_response.slice(0, 80),
     });
     set({
+      transcript: historyWithQuestion,
       lastResponse: result.response,
       state: setStateLog(get(), "speaking"),
     });
@@ -91,7 +98,7 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
     set({ state: setStateLog(get(), "listening"), error: null });
   },
 
-  submitAnswer: async (jobId: string, text: string) => {
+  submitAnswer: (jobId: string, text: string) => {
     const s = get();
     debug.interview("submitAnswer", {
       currentState: s.state,
@@ -99,9 +106,9 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
       textPreview: text.slice(0, 60),
     });
 
-    if (s.state !== "listening" && s.state !== "speaking") {
+    if (s.state !== "listening") {
       debug.interview("submitAnswerBlocked", {
-        reason: `state is ${s.state}, expected listening or speaking`,
+        reason: `state is ${s.state}, expected listening`,
       });
       return;
     }
@@ -110,21 +117,69 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
 
     const candidateEntry: TranscriptEntry = { role: "candidate", text };
     const newHistory = [...s.transcript, candidateEntry];
-    const newQCount = s.questionCount + 1;
 
     debug.interview("answerRecorded", {
-      questionCount: newQCount,
       transcriptLength: newHistory.length,
     });
 
-    set({ transcript: newHistory, questionCount: newQCount });
+    set({
+      transcript: newHistory,
+      state: setStateLog(get(), "answered"),
+    });
+  },
+
+  retryAnswer: () => {
+    const s = get();
+    debug.interview("retryAnswer", { state: s.state });
+
+    if (s.state !== "answered") {
+      debug.interview("retryAnswerBlocked", {
+        reason: `state is ${s.state}, expected answered`,
+      });
+      return;
+    }
+
+    // Remove the last candidate entry
+    const newTranscript = [...s.transcript];
+    while (newTranscript.length > 0 && newTranscript[newTranscript.length - 1].role === "candidate") {
+      newTranscript.pop();
+    }
+
+    debug.interview("retryAnswer:reverted", {
+      oldLength: s.transcript.length,
+      newLength: newTranscript.length,
+    });
+
+    set({
+      transcript: newTranscript,
+      state: setStateLog(get(), "listening"),
+      error: null,
+    });
+  },
+
+  advanceQuestion: async (jobId: string) => {
+    const s = get();
+    debug.interview("advanceQuestion", { state: s.state });
+
+    if (s.state !== "answered") {
+      debug.interview("advanceQuestionBlocked", {
+        reason: `state is ${s.state}, expected answered`,
+      });
+      return;
+    }
+
+    set({ error: null });
+
+    const newQCount = s.questionCount + 1;
+
+    set({ questionCount: newQCount });
 
     if (newQCount >= MAX_QUESTIONS) {
       debug.interview("evaluating");
       set({ state: setStateLog(get(), "evaluating") });
 
       const t0 = performance.now();
-      const evalResult = await evaluateSession(jobId, newHistory);
+      const evalResult = await evaluateSession(jobId, s.transcript);
       debug.llm("evaluateSession", {
         durationMs: Math.round(performance.now() - t0),
         hasError: !!evalResult.error,
@@ -134,7 +189,7 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
       if (evalResult.evaluation) {
         set({ evaluation: evalResult.evaluation });
 
-        const saveResult = await saveSession(jobId, newHistory, evalResult.evaluation);
+        const saveResult = await saveSession(jobId, s.transcript, evalResult.evaluation);
         if (saveResult.sessionId) {
           debug.interview("sessionSaved", { sessionId: saveResult.sessionId });
           set({ sessionId: saveResult.sessionId });
@@ -152,7 +207,7 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
       set({ state: setStateLog(get(), "thinking") });
 
       const t0 = performance.now();
-      const result = await conductInterviewTurn(jobId, newHistory, newQCount);
+      const result = await conductInterviewTurn(jobId, s.transcript, newQCount);
       debug.llm("conductInterviewTurn", {
         durationMs: Math.round(performance.now() - t0),
         questionNumber: newQCount + 1,
@@ -169,7 +224,14 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
         return;
       }
 
+      const interviewerEntry: TranscriptEntry = {
+        role: "interviewer",
+        text: result.response.spoken_response,
+      };
+      const historyWithQuestion = [...s.transcript, interviewerEntry];
+
       set({
+        transcript: historyWithQuestion,
         lastResponse: result.response,
         state: setStateLog(get(), "speaking"),
       });

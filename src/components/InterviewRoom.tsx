@@ -10,6 +10,13 @@ import { transcribeAudio } from "@/actions/stt";
 import type { Job } from "@/lib/types";
 
 const MAX_QUESTIONS = 6;
+const RECORDING_MAX_SECONDS = 90;
+
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
 
 // ── Sub-components ──
 
@@ -47,10 +54,13 @@ function MicButton({
 
 function TranscriptView({ entries }: { entries: { role: string; text: string }[] }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [entries]);
+
   if (entries.length === 0) return null;
+
   return (
     <div className="flex-1 overflow-y-auto space-y-4 px-2 py-4">
       {entries.map((entry, i) => (
@@ -119,6 +129,7 @@ export function InterviewRoom({ job }: { job: Job }) {
   const interview = useInterviewStore();
 
   const [transcribing, setTranscribing] = useState(false);
+  const [textInput, setTextInput] = useState("");
   const ttsEffectRunRef = useRef(false);
 
   // ── Orchestration: TTS → listening ──
@@ -204,13 +215,23 @@ export function InterviewRoom({ job }: { job: Job }) {
     }
   }, [recorder, interview, job.id]);
 
-  const handleTextSubmit = useCallback(
-    (text: string) => {
-      debug.room("handleTextSubmit", { textLength: text.length });
-      interview.submitAnswer(job.id, text);
-    },
-    [interview, job.id]
-  );
+  const handleTextSubmit = useCallback(() => {
+    const text = textInput.trim();
+    if (!text) return;
+    debug.room("handleTextSubmit", { textLength: text.length });
+    interview.submitAnswer(job.id, text);
+    setTextInput("");
+  }, [textInput, interview, job.id]);
+
+  const handleRetry = useCallback(() => {
+    debug.room("handleRetry");
+    interview.retryAnswer();
+  }, [interview]);
+
+  const handleAdvance = useCallback(() => {
+    debug.room("handleAdvance", { jobId: job.id });
+    interview.advanceQuestion(job.id);
+  }, [interview, job.id]);
 
   const handleStart = () => {
     debug.room("handleStart", { jobId: job.id });
@@ -222,8 +243,8 @@ export function InterviewRoom({ job }: { job: Job }) {
     interview.reset();
   };
 
-  const canInteract =
-    interview.state === "listening" || interview.state === "speaking";
+  const isRecording = recorder.isRecording;
+  const recRemaining = RECORDING_MAX_SECONDS - recorder.elapsedSeconds;
 
   // ── IDLE STATE ──
   if (interview.state === "idle") {
@@ -240,7 +261,7 @@ export function InterviewRoom({ job }: { job: Job }) {
               Ready for your {job.title} interview?
             </h2>
             <p className="text-interview-muted text-sm mb-6">
-              {MAX_QUESTIONS} questions. Record your answers or type them. The AI adapts based on what you say.
+              {MAX_QUESTIONS} questions. Record your answers or type them. You can retry before advancing.
             </p>
             {!recorder.isSupported && recorder.error && (
               <div className="mb-4 text-xs text-interview-warning bg-interview-warning/10 rounded-lg px-3 py-2">
@@ -299,7 +320,6 @@ export function InterviewRoom({ job }: { job: Job }) {
   }
 
   // ── ACTIVE INTERVIEW ──
-  const lastSpokenResponse = interview.lastResponse?.spoken_response ?? "";
 
   return (
     <>
@@ -317,9 +337,13 @@ export function InterviewRoom({ job }: { job: Job }) {
                   i < interview.questionCount
                     ? "bg-interview-accent"
                     : i === interview.questionCount
-                    ? interview.state === "thinking" || interview.state === "speaking"
+                    ? interview.state === "listening"
                       ? "bg-interview-accent animate-pulse"
-                      : "bg-interview-border"
+                      : interview.state === "answered"
+                        ? "bg-interview-success"
+                        : interview.state === "thinking" || interview.state === "speaking"
+                          ? "bg-interview-accent animate-pulse"
+                          : "bg-interview-border"
                     : "bg-interview-border"
                 }`}
               />
@@ -327,20 +351,8 @@ export function InterviewRoom({ job }: { job: Job }) {
           </div>
         </div>
 
-        {/* Transcript */}
+        {/* Transcript — all Q&A visible here */}
         <TranscriptView entries={interview.transcript} />
-
-        {/* AI speaking */}
-        {interview.state === "speaking" && lastSpokenResponse && (
-          <div className="px-2 pb-3">
-            <div className="rounded-2xl px-4 py-2.5 text-sm bg-interview-surface border border-interview-accent/30 text-interview-text">
-              <div className="text-xs text-interview-accent mb-0.5 font-medium">
-                Interviewer {tts.isSpeaking ? "(speaking...)" : ""}
-              </div>
-              {lastSpokenResponse}
-            </div>
-          </div>
-        )}
 
         {/* Thinking */}
         {interview.state === "thinking" && (
@@ -355,6 +367,13 @@ export function InterviewRoom({ job }: { job: Job }) {
                 Thinking...
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Speaking — interviewer TTS is playing */}
+        {interview.state === "speaking" && (
+          <div className="px-2 pb-3 text-center text-xs text-interview-muted">
+            {tts.isSpeaking ? "Interviewer is speaking..." : "Preparing next question..."}
           </div>
         )}
 
@@ -381,79 +400,104 @@ export function InterviewRoom({ job }: { job: Job }) {
           </div>
         )}
 
-        {/* Recording indicator */}
-        {recorder.isRecording && (
-          <div className="px-2 pb-3">
-            <div className="rounded-2xl px-4 py-2.5 text-sm bg-interview-accent/10 border border-interview-accent/20 text-interview-text min-h-[2.5rem]">
-              <div className="text-xs text-interview-accent mb-0.5 font-medium">You (recording...)</div>
-              <span className="text-interview-muted">Recording your answer — click the mic when done</span>
-            </div>
-          </div>
-        )}
-
-        {/* Controls */}
-        {canInteract && !transcribing && (
-          <div className="py-4 border-t border-interview-border/50 flex items-center justify-center gap-6">
-            <MicButton
-              isActive={recorder.isRecording}
-              onClick={handleMicToggle}
-              disabled={
-                interview.state === "thinking" ||
-                interview.state === "evaluating"
-              }
-            />
-            {!recorder.isRecording && (
-              <div className="text-xs text-interview-muted text-center max-w-[12rem]">
-                {interview.state === "speaking"
-                  ? "Waiting for interviewer to finish..."
-                  : "Tap to record your answer"}
+        {/* ── STATE: LISTENING — user records or types ── */}
+        {interview.state === "listening" && !transcribing && (
+          <>
+            {/* Recording indicator */}
+            {isRecording && (
+              <div className="px-2 pb-3">
+                <div className="rounded-2xl px-4 py-2.5 text-sm bg-interview-accent/10 border border-interview-accent/20 text-interview-text min-h-[2.5rem]">
+                  <div className="text-xs text-interview-accent mb-0.5 font-medium">
+                    You (recording...)
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-interview-muted">Recording your answer</span>
+                    <span
+                      className={`text-xs font-mono tabular-nums ${
+                        recRemaining <= 10
+                          ? "text-interview-danger animate-pulse"
+                          : recRemaining <= 25
+                            ? "text-interview-warning"
+                            : "text-interview-muted"
+                      }`}
+                    >
+                      {formatTime(recorder.elapsedSeconds)} / {formatTime(RECORDING_MAX_SECONDS)}
+                    </span>
+                  </div>
+                  {recorder.timeLimitReached && (
+                    <div className="mt-1 text-xs text-interview-warning">
+                      Time limit reached — processing your recording...
+                    </div>
+                  )}
+                </div>
               </div>
             )}
-          </div>
+
+            {/* Controls */}
+            <div className="py-4 border-t border-interview-border/50 flex items-center justify-center gap-6">
+              <MicButton
+                isActive={isRecording}
+                onClick={handleMicToggle}
+                disabled={false}
+              />
+              {!isRecording && (
+                <div className="text-xs text-interview-muted text-center max-w-[12rem]">
+                  Tap to record your answer
+                </div>
+              )}
+            </div>
+
+            {/* Text input */}
+            {!isRecording && (
+              <div className="pb-4 px-2">
+                <div className="flex gap-2">
+                  <textarea
+                    value={textInput}
+                    onChange={(e) => setTextInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleTextSubmit();
+                      }
+                    }}
+                    placeholder="Or type your answer here..."
+                    rows={2}
+                    className="flex-1 resize-none rounded-xl px-3 py-2 text-sm bg-interview-surface border border-interview-border text-interview-text placeholder:text-interview-muted focus:border-interview-accent/50 focus:outline-none"
+                  />
+                  <button
+                    onClick={handleTextSubmit}
+                    disabled={!textInput.trim()}
+                    className="shrink-0 px-4 py-2 bg-interview-surface border border-interview-border hover:border-interview-accent/50 text-interview-text rounded-xl text-sm font-medium transition-colors disabled:opacity-40"
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
 
-        {/* Text input fallback — always available in listening state */}
-        {canInteract && !recorder.isRecording && !transcribing && (
-          <div className="pb-4 px-2">
-            <div className="flex gap-2">
-              <textarea
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    const text = (e.target as HTMLTextAreaElement).value.trim();
-                    if (text) {
-                      handleTextSubmit(text);
-                      (e.target as HTMLTextAreaElement).value = "";
-                    }
-                  }
-                }}
-                placeholder="Or type your answer here..."
-                disabled={
-                  interview.state === "thinking" ||
-                  interview.state === "evaluating"
-                }
-                rows={2}
-                className="flex-1 resize-none rounded-xl px-3 py-2 text-sm bg-interview-surface border border-interview-border text-interview-text placeholder:text-interview-muted focus:border-interview-accent/50 focus:outline-none disabled:opacity-40"
-              />
-              <button
-                onClick={(e) => {
-                  const textarea = (
-                    e.currentTarget.parentElement as HTMLDivElement
-                  ).querySelector("textarea") as HTMLTextAreaElement;
-                  const text = textarea?.value.trim();
-                  if (text) {
-                    handleTextSubmit(text);
-                    textarea.value = "";
-                  }
-                }}
-                disabled={
-                  interview.state === "thinking" ||
-                  interview.state === "evaluating"
-                }
-                className="shrink-0 px-4 py-2 bg-interview-surface border border-interview-border hover:border-interview-accent/50 text-interview-text rounded-xl text-sm font-medium transition-colors disabled:opacity-40"
-              >
-                Send
-              </button>
+        {/* ── STATE: ANSWERED — retry or advance ── */}
+        {interview.state === "answered" && (
+          <div className="py-4 border-t border-interview-border/50">
+            <div className="text-center mb-3">
+              <div className="text-xs text-interview-success mb-1">
+                Answer recorded
+              </div>
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  onClick={handleRetry}
+                  className="px-5 py-2.5 border border-interview-danger/40 hover:border-interview-danger hover:bg-interview-danger/10 text-interview-danger rounded-xl text-sm font-medium transition-colors"
+                >
+                  Retry
+                </button>
+                <button
+                  onClick={handleAdvance}
+                  className="px-5 py-2.5 bg-interview-accent hover:bg-interview-accent-hover text-white rounded-xl text-sm font-medium transition-colors"
+                >
+                  Next Question
+                </button>
+              </div>
             </div>
           </div>
         )}

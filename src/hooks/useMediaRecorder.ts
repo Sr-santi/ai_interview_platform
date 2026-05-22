@@ -1,11 +1,15 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { debug } from "@/stores/debug";
+
+const RECORDING_MAX_SECONDS = 90;
 
 interface MediaRecorderHook {
   isSupported: boolean;
   isRecording: boolean;
+  elapsedSeconds: number;
+  timeLimitReached: boolean;
   error: string | null;
   startRecording: () => void;
   stopRecording: () => Promise<Blob | null>;
@@ -14,14 +18,61 @@ interface MediaRecorderHook {
 export function useMediaRecorder(): MediaRecorderHook {
   const [isSupported, setIsSupported] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [timeLimitReached, setTimeLimitReached] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const resolveRef = useRef<((blob: Blob | null) => void) | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const secondsRef = useRef(0);
 
-  // Lazy-init on first startRecording call to avoid permission prompt on mount
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
+  const startTimer = useCallback(() => {
+    secondsRef.current = 0;
+    setElapsedSeconds(0);
+    setTimeLimitReached(false);
+
+    timerRef.current = setInterval(() => {
+      secondsRef.current += 1;
+      setElapsedSeconds(secondsRef.current);
+
+      if (secondsRef.current >= RECORDING_MAX_SECONDS) {
+        debug.stt("mediaRecorder:timeLimitReached", {
+          seconds: secondsRef.current,
+        });
+
+        if (timerRef.current) clearInterval(timerRef.current);
+        setTimeLimitReached(true);
+
+        // Auto-stop
+        const recorder = mediaRecorderRef.current;
+        if (recorder && recorder.state !== "inactive") {
+          recorder.stop();
+          setIsRecording(false);
+          streamRef.current?.getTracks().forEach((t) => t.stop());
+          streamRef.current = null;
+          mediaRecorderRef.current = null;
+        }
+      }
+    }, 1000);
+  }, []);
+
+  const stopTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
   const ensureStream = useCallback(async (): Promise<MediaStream | null> => {
     if (streamRef.current) return streamRef.current;
 
@@ -61,6 +112,7 @@ export function useMediaRecorder(): MediaRecorderHook {
     debug.stt("mediaRecorder:start called");
     setError(null);
     chunksRef.current = [];
+    setTimeLimitReached(false);
 
     ensureStream().then((stream) => {
       if (!stream) return;
@@ -80,9 +132,11 @@ export function useMediaRecorder(): MediaRecorderHook {
         };
 
         recorder.onstop = () => {
+          stopTimer();
           debug.stt("mediaRecorder:onstop", {
             chunks: chunksRef.current.length,
             totalBytes: chunksRef.current.reduce((sum, c) => sum + c.size, 0),
+            seconds: secondsRef.current,
           });
           if (resolveRef.current) {
             const blob = new Blob(chunksRef.current, { type: recorder.mimeType });
@@ -92,6 +146,7 @@ export function useMediaRecorder(): MediaRecorderHook {
         };
 
         recorder.onerror = (e) => {
+          stopTimer();
           debug.stt("mediaRecorder:onerror", { error: String(e) });
           setError("Recording error occurred. Try again.");
           setIsRecording(false);
@@ -103,12 +158,15 @@ export function useMediaRecorder(): MediaRecorderHook {
 
         recorder.onstart = () => {
           debug.stt("mediaRecorder:onstart");
+          startTimer();
         };
 
         mediaRecorderRef.current = recorder;
         recorder.start();
         setIsRecording(true);
-        debug.stt("mediaRecorder:recording started");
+        debug.stt("mediaRecorder:recording started", {
+          timeLimit: RECORDING_MAX_SECONDS,
+        });
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Unknown error";
         debug.stt("mediaRecorder:start failed", { error: msg });
@@ -116,13 +174,14 @@ export function useMediaRecorder(): MediaRecorderHook {
         setIsSupported(false);
       }
     });
-  }, [isRecording, ensureStream]);
+  }, [isRecording, ensureStream, startTimer, stopTimer]);
 
   const stopRecording = useCallback((): Promise<Blob | null> => {
     return new Promise((resolve) => {
       const recorder = mediaRecorderRef.current;
 
       if (!recorder || recorder.state === "inactive") {
+        stopTimer();
         debug.stt("mediaRecorder:stop called but inactive", {
           hasRecorder: !!recorder,
           state: recorder?.state ?? "none",
@@ -133,22 +192,24 @@ export function useMediaRecorder(): MediaRecorderHook {
 
       debug.stt("mediaRecorder:stop called", {
         state: recorder.state,
+        elapsed: secondsRef.current,
       });
 
       resolveRef.current = resolve;
       recorder.stop();
       setIsRecording(false);
 
-      // Clean up the stream tracks
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
       mediaRecorderRef.current = null;
     });
-  }, []);
+  }, [stopTimer]);
 
   return {
     isSupported,
     isRecording,
+    elapsedSeconds,
+    timeLimitReached,
     error,
     startRecording,
     stopRecording,
