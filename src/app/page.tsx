@@ -5,6 +5,7 @@ import type { Job } from "@/lib/types";
 
 export default async function Home() {
   const dbJobs = await prisma.job.findMany({
+    where: { isPublished: true },
     orderBy: { title: "asc" },
   });
 

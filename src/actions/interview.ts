@@ -7,6 +7,27 @@ import type { Prisma } from "@prisma/client";
 
 const MAX_QUESTIONS = 6;
 
+function salvageJson(text: string): string | null {
+  const standardMatch = text.match(/\{[\s\S]*\}/);
+  if (standardMatch) return standardMatch[0];
+
+  const salvageAttempts = ['"]}', '"]}]', '"]}'];
+  for (const suffix of salvageAttempts) {
+    try {
+      const closed = text + suffix;
+      const match = closed.match(/\{[\s\S]*\}/);
+      if (match) {
+        JSON.parse(match[0]); // validate
+        return match[0];
+      }
+    } catch {
+      // continue to next attempt
+    }
+  }
+
+  return null;
+}
+
 function buildInterviewPrompt(
   systemPrompt: string,
   history: TranscriptEntry[],
@@ -54,6 +75,8 @@ ${isFinalQuestion ? "THIS IS THE FINAL QUESTION. Tell the candidate this is the 
 ${needsFollowUp ? "The next question MUST be a follow-up that references the candidate's last answer." : "Ask a new core question. You may ask a natural follow-up if the candidate's answer warrants it."}
 
 Ask exactly ONE question. Be conversational - under 30 words.
+You have access to voice expression tags: <laugh>, <breath>, <sigh>.
+Sprinkle these tags naturally into your spoken_response (max 1-2 per turn) to sound human.
 
 You MUST respond with ONLY a raw JSON object (no markdown, no code fences):
 {
@@ -72,60 +95,39 @@ function parseLLMResponse(raw: string): LLMResponse | null {
     text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   }
 
-  // Try to find a complete JSON object
-  let jsonMatch = text.match(/\{[\s\S]*\}/);
-
-  // If no closing brace (truncated JSON due to token limits), try to salvage
-  if (!jsonMatch) {
-    // Attempt to close the truncated JSON by appending likely endings
-    const salvageAttempts = ['"]}', '"]}]', '"]}'];
-    for (const suffix of salvageAttempts) {
-      try {
-        const closed = text + suffix;
-        const match = closed.match(/\{[\s\S]*\}/);
-        if (match) {
-          JSON.parse(match[0]); // validate
-          jsonMatch = match;
-          break;
-        }
-      } catch {
-        // continue to next attempt
-      }
-    }
-  }
-
-  // If we have a JSON match, parse and validate
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (
-        typeof parsed.thought_process === "string" &&
-        Array.isArray(parsed.skills_detected) &&
-        typeof parsed.spoken_response === "string"
-      ) {
+  const jsonStr = salvageJson(text);
+  if (!jsonStr) {
+    // Last resort: extract spoken_response via regex
+    const spokenMatch = text.match(/"spoken_response"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (spokenMatch) {
+      const spokenResponse = spokenMatch[1].replace(/\\(.)/g, "$1");
+      if (spokenResponse.trim()) {
         return {
-          thought_process: parsed.thought_process,
-          skills_detected: parsed.skills_detected.map(String),
-          spoken_response: parsed.spoken_response,
-          category: typeof parsed.category === "string" ? parsed.category : undefined,
+          thought_process: "Fallback: extracted from truncated response",
+          skills_detected: [],
+          spoken_response: spokenResponse.trim(),
         };
       }
-    } catch {
-      // JSON parse failed, fall through to fallback
     }
+    return null;
   }
 
-  // Last resort: extract spoken_response via regex, common when only that field exists
-  const spokenMatch = text.match(/"spoken_response"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-  if (spokenMatch) {
-    const spokenResponse = spokenMatch[1].replace(/\\(.)/g, "$1");
-    if (spokenResponse.trim()) {
+  try {
+    const parsed = JSON.parse(jsonStr);
+    if (
+      typeof parsed.thought_process === "string" &&
+      Array.isArray(parsed.skills_detected) &&
+      typeof parsed.spoken_response === "string"
+    ) {
       return {
-        thought_process: "Fallback: extracted from truncated response",
-        skills_detected: [],
-        spoken_response: spokenResponse.trim(),
+        thought_process: parsed.thought_process,
+        skills_detected: parsed.skills_detected.map(String),
+        spoken_response: parsed.spoken_response,
+        category: typeof parsed.category === "string" ? parsed.category : undefined,
       };
     }
+  } catch {
+    // JSON parse failed, return null
   }
 
   return null;
@@ -258,30 +260,12 @@ Score is 0-100, based on the rubric above. Be harsh — it's more useful than be
       text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
     }
 
-    let jsonMatch = text.match(/\{[\s\S]*\}/);
+    const jsonStr = salvageJson(text);
 
-    // Salvage truncated JSON — same recovery as parseLLMResponse
-    if (!jsonMatch) {
-      const salvageAttempts = ['"]}', '"]}]', '"]}'];
-      for (const suffix of salvageAttempts) {
-        try {
-          const closed = text + suffix;
-          const match = closed.match(/\{[\s\S]*\}/);
-          if (match) {
-            JSON.parse(match[0]); // validate
-            jsonMatch = match;
-            break;
-          }
-        } catch {
-          // continue to next attempt
-        }
-      }
-    }
-
-    if (!jsonMatch) return { evaluation: null, error: "No JSON found in evaluation" };
+    if (!jsonStr) return { evaluation: null, error: "No JSON found in evaluation" };
 
     try {
-      const parsed = JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(jsonStr);
       if (
         Array.isArray(parsed.strengths) &&
         Array.isArray(parsed.concerns) &&
