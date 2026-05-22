@@ -8,11 +8,12 @@ datasource db {
 }
 
 model Job {
-  id           String    @id @default(uuid())
-  title        String
-  description  String
-  systemPrompt String
-  sessions     Session[]
+  id                String    @id @default(uuid())
+  title             String
+  description       String
+  systemPrompt      String
+  maxDurationSeconds Int      @default(1200)
+  sessions          Session[]
 }
 
 model Session {

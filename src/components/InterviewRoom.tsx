@@ -235,7 +235,7 @@ export function InterviewRoom({ job }: { job: Job }) {
 
   const handleStart = () => {
     debug.room("handleStart", { jobId: job.id });
-    interview.start(job.id);
+    interview.start(job.id, job.maxDurationSeconds);
   };
 
   const handleRestart = () => {
@@ -326,8 +326,23 @@ export function InterviewRoom({ job }: { job: Job }) {
       <div className="flex flex-col h-[calc(100vh-3rem)] max-w-2xl mx-auto px-4">
         {/* Progress */}
         <div className="py-3 flex items-center justify-between border-b border-interview-border/50">
-          <div className="text-xs text-interview-muted">
-            Question {interview.questionCount + 1} of {MAX_QUESTIONS}
+          <div className="flex items-center gap-4">
+            <span className="text-xs text-interview-muted">
+              Question {interview.questionCount + 1} of {MAX_QUESTIONS}
+            </span>
+            {interview.maxDurationSeconds != null && (
+              <span
+                className={`text-xs font-mono tabular-nums ${
+                  interview.timerWarning === "critical"
+                    ? "text-interview-danger animate-pulse"
+                    : interview.timerWarning === "warning"
+                      ? "text-interview-warning"
+                      : "text-interview-muted"
+                }`}
+              >
+                {formatTime(interview.elapsedSeconds)} / {formatTime(interview.maxDurationSeconds)}
+              </span>
+            )}
           </div>
           <div className="flex gap-1">
             {Array.from({ length: MAX_QUESTIONS }).map((_, i) => (

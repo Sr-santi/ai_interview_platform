@@ -12,7 +12,11 @@ export type InterviewState =
   | "evaluating"
   | "complete";
 
+export type TimerWarning = "normal" | "warning" | "critical";
+
 const MAX_QUESTIONS = 6;
+const WARNING_THRESHOLD = 0.8; // 80% of max duration
+const CRITICAL_THRESHOLD = 0.95; // 95% of max duration
 
 interface InterviewStore {
   state: InterviewState;
@@ -23,7 +27,12 @@ interface InterviewStore {
   sessionId: string | null;
   error: string | null;
 
-  start: (jobId: string) => Promise<void>;
+  // Session timer
+  elapsedSeconds: number;
+  maxDurationSeconds: number | null;
+  timerWarning: TimerWarning;
+
+  start: (jobId: string, maxDurationSeconds: number | null) => Promise<void>;
   setListeningState: () => void;
   submitAnswer: (jobId: string, text: string) => void;
   retryAnswer: () => void;
@@ -37,6 +46,51 @@ function setStateLog(store: InterviewStore, to: InterviewState) {
   return to;
 }
 
+let timerInterval: ReturnType<typeof setInterval> | null = null;
+
+function startTimerInStore() {
+  stopTimerInStore();
+  timerInterval = setInterval(() => {
+    const state = useInterviewStore.getState();
+    const newElapsed = state.elapsedSeconds + 1;
+
+    const warning: TimerWarning =
+      state.maxDurationSeconds != null
+        ? newElapsed >= state.maxDurationSeconds * CRITICAL_THRESHOLD
+          ? "critical"
+          : newElapsed >= state.maxDurationSeconds * WARNING_THRESHOLD
+            ? "warning"
+            : "normal"
+        : "normal";
+
+    useInterviewStore.setState({
+      elapsedSeconds: newElapsed,
+      timerWarning: warning,
+    });
+
+    // Log at thresholds
+    if (
+      state.maxDurationSeconds != null &&
+      (newElapsed === Math.ceil(state.maxDurationSeconds * WARNING_THRESHOLD) ||
+        newElapsed === Math.ceil(state.maxDurationSeconds * CRITICAL_THRESHOLD))
+    ) {
+      debug.interview("timerWarning", {
+        elapsed: newElapsed,
+        max: state.maxDurationSeconds,
+        warning,
+        percent: Math.round((newElapsed / state.maxDurationSeconds) * 100),
+      });
+    }
+  }, 1000);
+}
+
+function stopTimerInStore() {
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
+}
+
 export const useInterviewStore = create<InterviewStore>((set, get) => ({
   state: "idle",
   transcript: [],
@@ -46,8 +100,12 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
   sessionId: null,
   error: null,
 
-  start: async (jobId: string) => {
-    debug.interview("start", { jobId });
+  elapsedSeconds: 0,
+  maxDurationSeconds: null,
+  timerWarning: "normal",
+
+  start: async (jobId: string, maxDurationSeconds: number | null) => {
+    debug.interview("start", { jobId, maxDurationSeconds });
     set({ state: setStateLog(get(), "thinking"), error: null });
 
     const initialHistory: TranscriptEntry[] = [
@@ -57,7 +115,16 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
       },
     ];
 
-    set({ transcript: initialHistory, questionCount: 0 });
+    set({
+      transcript: initialHistory,
+      questionCount: 0,
+      elapsedSeconds: 0,
+      maxDurationSeconds,
+      timerWarning: "normal",
+    });
+
+    // Start the session timer
+    startTimerInStore();
 
     const t0 = performance.now();
     const result = await conductInterviewTurn(jobId, initialHistory, 0);
@@ -70,6 +137,7 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
 
     if (result.error || !result.response) {
       debug.interview("startFailed", { error: result.error });
+      stopTimerInStore();
       set({
         state: setStateLog(get(), "idle"),
         error: result.error ?? "No response from interviewer",
@@ -122,10 +190,7 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
       transcriptLength: newHistory.length,
     });
 
-    set({
-      transcript: newHistory,
-      state: setStateLog(get(), "answered"),
-    });
+    set({ transcript: newHistory, state: setStateLog(get(), "answered") });
   },
 
   retryAnswer: () => {
@@ -139,7 +204,6 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
       return;
     }
 
-    // Remove the last candidate entry
     const newTranscript = [...s.transcript];
     while (newTranscript.length > 0 && newTranscript[newTranscript.length - 1].role === "candidate") {
       newTranscript.pop();
@@ -171,7 +235,6 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
     set({ error: null });
 
     const newQCount = s.questionCount + 1;
-
     set({ questionCount: newQCount });
 
     if (newQCount >= MAX_QUESTIONS) {
@@ -201,6 +264,8 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
         debug.interview("evaluationFailed", { error: evalResult.error });
         set({ error: evalResult.error ?? "Evaluation failed" });
       }
+
+      stopTimerInStore();
       set({ state: setStateLog(get(), "complete") });
     } else {
       debug.interview("askingNextQuestion", { nextQ: newQCount + 1 });
@@ -217,6 +282,7 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
 
       if (result.error || !result.response) {
         debug.interview("questionFailed", { error: result.error });
+        stopTimerInStore();
         set({
           state: setStateLog(get(), "idle"),
           error: result.error ?? "No response from interviewer",
@@ -240,6 +306,7 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
 
   reset: () => {
     debug.interview("reset");
+    stopTimerInStore();
     set({
       state: "idle",
       transcript: [],
@@ -248,6 +315,9 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
       evaluation: null,
       sessionId: null,
       error: null,
+      elapsedSeconds: 0,
+      maxDurationSeconds: null,
+      timerWarning: "normal",
     });
   },
 }));

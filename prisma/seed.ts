@@ -9,6 +9,7 @@ async function main() {
       title: "Frontend Engineer",
       description:
         "Build responsive, accessible web applications using React and TypeScript. Focus on component architecture, state management, and performance optimization.",
+      maxDurationSeconds: 1200,
       systemPrompt: `You are an experienced technical interviewer for a Frontend Engineer position.
 
 Your task: conduct a structured voice interview with 6 questions:
@@ -33,6 +34,7 @@ Output must be valid JSON with this exact schema:
       title: "Backend Engineer",
       description:
         "Design and implement scalable APIs, database schemas, and system architectures. Focus on reliability, performance, and clean data models.",
+      maxDurationSeconds: 1200,
       systemPrompt: `You are an experienced technical interviewer for a Backend Engineer position.
 
 Your task: conduct a structured voice interview with 6 questions:
@@ -57,6 +59,7 @@ Output must be valid JSON with this exact schema:
       title: "Product Manager",
       description:
         "Drive product strategy through user research, prioritization frameworks, and cross-functional collaboration. Balance business goals with user needs.",
+      maxDurationSeconds: 1200,
       systemPrompt: `You are an experienced interviewer for a Product Manager position.
 
 Your task: conduct a structured voice interview with 6 questions:
@@ -85,6 +88,7 @@ Output must be valid JSON with this exact schema:
         title: job.title,
         description: job.description,
         systemPrompt: job.systemPrompt,
+        maxDurationSeconds: job.maxDurationSeconds,
       },
       create: job,
     });
