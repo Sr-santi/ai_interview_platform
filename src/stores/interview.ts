@@ -3,10 +3,6 @@ import { conductInterviewTurn, evaluateSession, saveSession } from "@/actions/in
 import { debug } from "@/stores/debug";
 import type { TranscriptEntry, LLMResponse, Evaluation } from "@/lib/types";
 
-function stripExpressionTags(text: string): string {
-  return text.replace(/<\/?(?:laugh|breath|sigh)>/g, "");
-}
-
 export type InterviewState =
   | "idle"
   | "listening"
@@ -165,7 +161,7 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
 
     const interviewerEntry: TranscriptEntry = {
       role: "interviewer",
-      text: stripExpressionTags(result.response.spoken_response),
+      text: result.response.spoken_response,
     };
     const historyWithQuestion = [...initialHistory, interviewerEntry];
 
@@ -317,7 +313,7 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
 
       const interviewerEntry: TranscriptEntry = {
         role: "interviewer",
-        text: stripExpressionTags(result.response.spoken_response),
+        text: result.response.spoken_response,
       };
       const historyWithQuestion = [...s.transcript, interviewerEntry];
 

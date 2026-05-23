@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { JobCard } from "@/components/JobCard";
 import type { Job } from "@/lib/types";
 
+export const dynamic = "force-dynamic";
+
 export default async function Home() {
   const dbJobs = await prisma.job.findMany({
     where: { isPublished: true },

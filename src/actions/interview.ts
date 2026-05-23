@@ -75,8 +75,6 @@ ${isFinalQuestion ? "THIS IS THE FINAL QUESTION. Tell the candidate this is the 
 ${needsFollowUp ? "The next question MUST be a follow-up that references the candidate's last answer." : "Ask a new core question. You may ask a natural follow-up if the candidate's answer warrants it."}
 
 Ask exactly ONE question. Be conversational - under 30 words.
-You have access to voice expression tags: <laugh>, <breath>, <sigh>.
-Sprinkle these tags naturally into your spoken_response (max 1-2 per turn) to sound human.
 
 You MUST respond with ONLY a raw JSON object (no markdown, no code fences):
 {

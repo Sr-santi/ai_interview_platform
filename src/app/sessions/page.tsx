@@ -2,6 +2,8 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import type { Evaluation, TranscriptEntry } from "@/lib/types";
 
+export const dynamic = "force-dynamic";
+
 interface SessionRow {
   id: string;
   jobId: string;
