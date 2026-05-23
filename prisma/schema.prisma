@@ -1,5 +1,7 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  engineType    = "library"
+  binaryTargets = ["native"]
 }
 
 datasource db {
@@ -8,21 +10,21 @@ datasource db {
 }
 
 model Job {
-  id                String    @id @default(uuid())
-  title             String
-  description       String
-  systemPrompt      String
-  questionPack      Json?
-  maxDurationSeconds Int      @default(1200)
-  isPublished       Boolean   @default(true)
-  sessions          Session[]
+  id                 String    @id @default(uuid())
+  title              String
+  description        String
+  systemPrompt       String
+  questionPack       Json?
+  maxDurationSeconds Int       @default(1200)
+  isPublished        Boolean   @default(true)
+  sessions           Session[]
 }
 
 model Session {
   id         String   @id @default(uuid())
   jobId      String
   job        Job      @relation(fields: [jobId], references: [id])
-  transcript Json     // Array of { role: "interviewer"|"candidate", text: string } objects
-  evaluation Json?    // { strengths: string[], concerns: string[], score: number }
+  transcript Json // Array of { role: "interviewer"|"candidate", text: string } objects
+  evaluation Json? // { strengths: string[], concerns: string[], score: number }
   createdAt  DateTime @default(now())
 }

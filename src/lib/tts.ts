@@ -1,10 +1,4 @@
-import { pipeline, env } from "@huggingface/transformers";
 import type { TextToAudioPipeline, RawAudio } from "@huggingface/transformers";
-
-if (env.backends?.onnx) {
-  env.backends.onnx.logSeverityLevel = 4;
-  env.backends.onnx.logVerbosityLevel = 0;
-}
 
 const MODEL_ID = "onnx-community/Supertonic-TTS-ONNX";
 const VOICES_URL = "/voices/";
@@ -18,10 +12,17 @@ export async function loadPipeline(
   if (pipelinePromise) return pipelinePromise;
 
   pipelinePromise = (async () => {
+    const { pipeline: hfPipeline, env } = await import("@huggingface/transformers");
+
+    if (env.backends?.onnx) {
+      env.backends.onnx.logSeverityLevel = 4;
+      env.backends.onnx.logVerbosityLevel = 0;
+    }
+
     const progressMap = new Map<string, number>();
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const tts = (await (pipeline as any)("text-to-speech", MODEL_ID, {
+    const tts = (await (hfPipeline as any)("text-to-speech", MODEL_ID, {
       device: "webgpu",
       progress_callback: (info: { status: string; file?: string; loaded?: number; total?: number }) => {
         if (info.status === "progress" && info.file?.endsWith(".onnx_data") && info.loaded && info.total) {

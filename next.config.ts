@@ -6,7 +6,13 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "2mb",
     },
   },
-  serverExternalPackages: ["@prisma/client", "@huggingface/transformers"],
+  outputFileTracingExcludes: {
+    "*": [
+      "node_modules/onnxruntime-node/**/*",
+      "node_modules/@huggingface/transformers/**/*",
+    ],
+  },
+  serverExternalPackages: ["@prisma/client"],
   async headers() {
     return [
       {

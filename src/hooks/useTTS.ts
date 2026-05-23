@@ -2,8 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { debug } from "@/stores/debug";
-import { loadPipeline, loadVoices, synthesize } from "@/lib/tts";
-import type { TextToAudioPipeline } from "@huggingface/transformers";
+
+let ttsModulePromise: Promise<typeof import("@/lib/tts")> | null = null;
+
+function getTtsModule(): Promise<typeof import("@/lib/tts")> {
+  if (!ttsModulePromise) {
+    ttsModulePromise = import("@/lib/tts");
+  }
+  return ttsModulePromise;
+}
 
 export type TTSEngine = "onnx" | "speechSynthesis" | "none";
 
@@ -75,7 +82,8 @@ export function useTTS(): TTSHook {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [currentVoice, setCurrentVoice] = useState("M1");
 
-  const ttsRef = useRef<TextToAudioPipeline | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ttsRef = useRef<any>(null);
   const voicesRef = useRef<Record<string, Float32Array> | null>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -112,6 +120,8 @@ export function useTTS(): TTSHook {
     const timeout = setTimeout(() => controller.abort(), LOAD_TIMEOUT_MS);
 
     try {
+      const { loadPipeline, loadVoices } = await getTtsModule();
+
       const [pipeline, voices] = await Promise.race([
         Promise.all([
           loadPipeline((pct) => setLoadProgress(pct)),
@@ -150,6 +160,7 @@ export function useTTS(): TTSHook {
         }
 
         try {
+          const { synthesize } = await getTtsModule();
           const { audio, sampleRate } = await synthesize(
             text,
             ttsRef.current,
